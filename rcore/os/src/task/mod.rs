@@ -25,7 +25,9 @@ mod task;
 
 use crate::fs::{OpenFlags, open_file};
 use crate::sbi::shutdown;
+use crate::timer::get_time_ms;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 pub use context::TaskContext;
 use lazy_static::*;
 pub use manager::{TaskManager, fetch_task};
@@ -42,6 +44,12 @@ pub(crate) use task::{
     AgentLoopState, AgentMeta, CONTEXT_MAX_NODES, ContextNode, TaskControlBlock,
     TaskControlBlockInner,
 };
+
+/// Wake reason bit for heartbeat-triggered Agent Loop iterations.
+pub const AGENT_WAKE_HEARTBEAT: usize = 1;
+/// Wake reason bit for message-triggered Agent Loop iterations.
+pub const AGENT_WAKE_MESSAGE: usize = 2;
+
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.
@@ -59,6 +67,90 @@ pub fn suspend_current_and_run_next() {
     add_task(task);
     // jump to scheduling cycle
     schedule(task_cx_ptr);
+}
+
+/// Block the current task until another kernel event wakes it.
+pub fn block_current_and_run_next() {
+    let task = take_current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
+    task_inner.task_status = TaskStatus::Blocked;
+    drop(task_inner);
+    schedule(task_cx_ptr);
+}
+
+fn wake_agent_task(task: Arc<TaskControlBlock>, reason: usize) {
+    let mut should_enqueue = false;
+    {
+        let mut inner = task.inner_exclusive_access();
+        if let Some(meta) = inner.agent.as_mut() {
+            meta.pending_wake_reason |= reason;
+            meta.loop_state = AgentLoopState::Ready;
+            if inner.task_status == TaskStatus::Blocked {
+                inner.task_status = TaskStatus::Ready;
+                should_enqueue = true;
+            }
+        }
+    }
+    if should_enqueue {
+        add_task(task);
+    }
+}
+
+fn collect_children(task: &Arc<TaskControlBlock>) -> Vec<Arc<TaskControlBlock>> {
+    let inner = task.inner_exclusive_access();
+    let children = inner.children.clone();
+    drop(inner);
+    children
+}
+
+fn check_agent_heartbeats_from(task: Arc<TaskControlBlock>, now_ms: usize) {
+    let mut should_wake = false;
+    {
+        let mut inner = task.inner_exclusive_access();
+        if let Some(meta) = inner.agent.as_mut() {
+            if meta.heartbeat_interval > 0
+                && meta.heartbeat_next_at > 0
+                && now_ms >= meta.heartbeat_next_at
+            {
+                meta.heartbeat_next_at = now_ms + meta.heartbeat_interval;
+                meta.pending_wake_reason |= AGENT_WAKE_HEARTBEAT;
+                meta.loop_state = AgentLoopState::Ready;
+                if inner.task_status == TaskStatus::Blocked {
+                    inner.task_status = TaskStatus::Ready;
+                    should_wake = true;
+                }
+            }
+        }
+    }
+    if should_wake {
+        add_task(task.clone());
+    }
+    for child in collect_children(&task) {
+        check_agent_heartbeats_from(child, now_ms);
+    }
+}
+
+/// Wake blocked Agents whose heartbeat deadline has arrived.
+pub fn check_agent_heartbeats() {
+    check_agent_heartbeats_from(INITPROC.clone(), get_time_ms());
+}
+
+/// Wake an Agent by pid and record a semantic wake reason.
+pub fn wake_agent_by_pid(pid: usize, reason: usize) -> bool {
+    fn walk(task: Arc<TaskControlBlock>, pid: usize, reason: usize) -> bool {
+        if task.pid.0 == pid {
+            wake_agent_task(task, reason);
+            return true;
+        }
+        for child in collect_children(&task) {
+            if walk(child, pid, reason) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(INITPROC.clone(), pid, reason)
 }
 
 /// pid of usertests app in make run TEST=1

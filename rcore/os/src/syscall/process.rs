@@ -4,9 +4,9 @@ use crate::mm::{
     MapPermission, translated_byte_buffer, translated_ref, translated_refmut, translated_str,
 };
 use crate::task::{
-    AgentLoopState, AgentMeta, CONTEXT_MAX_NODES, ContextNode, INITPROC, TaskControlBlock,
-    TaskStatus, add_task, current_task, current_user_token, exit_current_and_run_next,
-    suspend_current_and_run_next,
+    AGENT_WAKE_MESSAGE, AgentLoopState, AgentMeta, CONTEXT_MAX_NODES, ContextNode, INITPROC,
+    TaskControlBlock, TaskStatus, add_task, block_current_and_run_next, current_task,
+    current_user_token, exit_current_and_run_next, suspend_current_and_run_next, wake_agent_by_pid,
 };
 use crate::timer::get_time_ms;
 use alloc::sync::Arc;
@@ -42,6 +42,9 @@ pub struct AgentInfo {
     pub agent_type: usize,
     /// Heartbeat interval in milliseconds.
     pub heartbeat_interval: usize,
+    pub heartbeat_next_at: usize,
+    pub pending_wake_reason: usize,
+    pub pending_messages: usize,
     /// Context/resource quota in bytes.
     pub resource_quota: usize,
     /// Agent loop state encoded as an integer.
@@ -254,6 +257,11 @@ pub fn sys_agent_create(
         heartbeat_interval,
         resource_quota,
     ));
+    if let Some(meta) = inner.agent.as_mut() {
+        if heartbeat_interval > 0 {
+            meta.heartbeat_next_at = get_time_ms() + heartbeat_interval;
+        }
+    }
     0
 }
 
@@ -262,6 +270,9 @@ fn fill_agent_info(pid: usize, meta: AgentMeta, info_ptr: *mut AgentInfo, token:
         pid,
         agent_type: meta.agent_type,
         heartbeat_interval: meta.heartbeat_interval,
+        heartbeat_next_at: meta.heartbeat_next_at,
+        pending_wake_reason: meta.pending_wake_reason,
+        pending_messages: meta.pending_messages,
         resource_quota: meta.resource_quota,
         loop_state: meta.loop_state as usize,
         context_path_meta: meta.context_path_meta,
@@ -306,7 +317,8 @@ fn status_code(status: TaskStatus) -> usize {
     match status {
         TaskStatus::Ready => 0,
         TaskStatus::Running => 1,
-        TaskStatus::Zombie => 2,
+        TaskStatus::Blocked => 2,
+        TaskStatus::Zombie => 3,
     }
 }
 
@@ -462,6 +474,7 @@ fn build_system_status() -> ToolSystemStatus {
         match inner.task_status {
             TaskStatus::Ready => result.ready_count += 1,
             TaskStatus::Running => result.running_count += 1,
+            TaskStatus::Blocked => {}
             TaskStatus::Zombie => result.zombie_count += 1,
         }
     });
@@ -559,6 +572,8 @@ pub fn sys_tool_call(request_ptr: *const ToolRequest, response_ptr: *mut ToolRes
                 return write_tool_response(token, response_ptr, TOOL_ERR_BAD_PARAM, 0, 0);
             };
             if let Some((pid, target_meta)) = find_agent_task_meta(INITPROC.clone(), target_pid) {
+                bump_agent_pending_message(INITPROC.clone(), pid);
+                wake_agent_by_pid(pid, AGENT_WAKE_MESSAGE);
                 let result = ToolMessageResult {
                     target_pid: pid,
                     target_agent_type: target_meta.agent_type,
@@ -738,4 +753,79 @@ pub fn sys_context_clear() -> isize {
     meta.context_active_node = 0;
     meta.context_path_meta = 0;
     TOOL_STATUS_OK
+}
+
+fn bump_agent_pending_message(task: Arc<TaskControlBlock>, pid: usize) -> bool {
+    let mut inner = task.inner_exclusive_access();
+    if task.pid.0 == pid {
+        if let Some(meta) = inner.agent.as_mut() {
+            meta.pending_messages += 1;
+            meta.pending_wake_reason |= AGENT_WAKE_MESSAGE;
+            return true;
+        }
+        return false;
+    }
+    let children = inner.children.clone();
+    drop(inner);
+    for child in children {
+        if bump_agent_pending_message(child, pid) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn sys_agent_heartbeat_set(interval_ms: usize) -> isize {
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    let Some(meta) = inner.agent.as_mut() else {
+        return TOOL_ERR_NOT_AGENT;
+    };
+    meta.heartbeat_interval = interval_ms;
+    meta.heartbeat_next_at = if interval_ms == 0 {
+        0
+    } else {
+        get_time_ms() + interval_ms
+    };
+    TOOL_STATUS_OK
+}
+
+pub fn sys_agent_heartbeat_stop() -> isize {
+    sys_agent_heartbeat_set(0)
+}
+
+pub fn sys_agent_wait() -> isize {
+    let task = current_task().unwrap();
+    {
+        let mut inner = task.inner_exclusive_access();
+        let Some(meta) = inner.agent.as_mut() else {
+            return TOOL_ERR_NOT_AGENT;
+        };
+        if meta.pending_wake_reason != 0 {
+            let reason = meta.pending_wake_reason;
+            meta.pending_wake_reason = 0;
+            if reason & AGENT_WAKE_MESSAGE != 0 && meta.pending_messages > 0 {
+                meta.pending_messages -= 1;
+            }
+            meta.loop_state = AgentLoopState::Running;
+            return reason as isize;
+        }
+        if meta.heartbeat_interval > 0 && meta.heartbeat_next_at == 0 {
+            meta.heartbeat_next_at = get_time_ms() + meta.heartbeat_interval;
+        }
+        meta.loop_state = AgentLoopState::Waiting;
+    }
+    block_current_and_run_next();
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    let Some(meta) = inner.agent.as_mut() else {
+        return TOOL_ERR_NOT_AGENT;
+    };
+    let reason = meta.pending_wake_reason;
+    meta.pending_wake_reason = 0;
+    if reason & AGENT_WAKE_MESSAGE != 0 && meta.pending_messages > 0 {
+        meta.pending_messages -= 1;
+    }
+    meta.loop_state = AgentLoopState::Running;
+    reason as isize
 }

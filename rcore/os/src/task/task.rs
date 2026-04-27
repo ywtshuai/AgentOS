@@ -41,6 +41,12 @@ pub struct AgentMeta {
     pub agent_type: usize,
     /// Requested heartbeat period in milliseconds.
     pub heartbeat_interval: usize,
+    /// Next heartbeat deadline in milliseconds. Zero means no heartbeat is armed.
+    pub heartbeat_next_at: usize,
+    /// Pending wake reason bits consumed by `sys_agent_wait`.
+    pub pending_wake_reason: usize,
+    /// Count of pending structured messages.
+    pub pending_messages: usize,
     /// Context/resource quota in bytes.
     pub resource_quota: usize,
     /// Agent loop state used by later milestones.
@@ -119,6 +125,9 @@ impl AgentMeta {
         Self {
             agent_type,
             heartbeat_interval,
+            heartbeat_next_at: 0,
+            pending_wake_reason: 0,
+            pending_messages: 0,
             resource_quota,
             loop_state: AgentLoopState::Ready,
             context_path_meta: 0,
@@ -304,5 +313,6 @@ impl TaskControlBlock {
 pub enum TaskStatus {
     Ready,
     Running,
+    Blocked,
     Zombie,
 }

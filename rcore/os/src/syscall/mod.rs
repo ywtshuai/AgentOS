@@ -28,6 +28,9 @@ const SYSCALL_CONTEXT_PUSH: usize = 504;
 const SYSCALL_CONTEXT_QUERY: usize = 505;
 const SYSCALL_CONTEXT_ROLLBACK: usize = 506;
 const SYSCALL_CONTEXT_CLEAR: usize = 507;
+const SYSCALL_AGENT_HEARTBEAT_SET: usize = 508;
+const SYSCALL_AGENT_HEARTBEAT_STOP: usize = 509;
+const SYSCALL_AGENT_WAIT: usize = 510;
 
 mod fs;
 mod process;
@@ -65,6 +68,9 @@ pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
         ),
         SYSCALL_CONTEXT_ROLLBACK => sys_context_rollback(args[0]),
         SYSCALL_CONTEXT_CLEAR => sys_context_clear(),
+        SYSCALL_AGENT_HEARTBEAT_SET => sys_agent_heartbeat_set(args[0]),
+        SYSCALL_AGENT_HEARTBEAT_STOP => sys_agent_heartbeat_stop(),
+        SYSCALL_AGENT_WAIT => sys_agent_wait(),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
     }
 }

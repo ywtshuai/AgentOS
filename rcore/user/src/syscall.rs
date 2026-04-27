@@ -19,6 +19,9 @@ const SYSCALL_CONTEXT_PUSH: usize = 504;
 const SYSCALL_CONTEXT_QUERY: usize = 505;
 const SYSCALL_CONTEXT_ROLLBACK: usize = 506;
 const SYSCALL_CONTEXT_CLEAR: usize = 507;
+const SYSCALL_AGENT_HEARTBEAT_SET: usize = 508;
+const SYSCALL_AGENT_HEARTBEAT_STOP: usize = 509;
+const SYSCALL_AGENT_WAIT: usize = 510;
 
 pub const TOOL_GET_SYSTEM_STATUS: usize = 1;
 pub const TOOL_QUERY_PROCESS: usize = 2;
@@ -30,6 +33,8 @@ pub const TOOL_PARAM_AGENT_TYPE: usize = 2;
 pub const TOOL_PARAM_TARGET_PID: usize = 10;
 pub const TOOL_VALUE_U64: usize = 1;
 pub const CONTEXT_QUERY_MAX_NODES: usize = 8;
+pub const AGENT_WAKE_HEARTBEAT: usize = 1;
+pub const AGENT_WAKE_MESSAGE: usize = 2;
 
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
@@ -37,6 +42,9 @@ pub struct AgentInfo {
     pub pid: usize,
     pub agent_type: usize,
     pub heartbeat_interval: usize,
+    pub heartbeat_next_at: usize,
+    pub pending_wake_reason: usize,
+    pub pending_messages: usize,
     pub resource_quota: usize,
     pub loop_state: usize,
     pub context_path_meta: usize,
@@ -270,4 +278,16 @@ pub fn sys_context_rollback(node_id: usize) -> isize {
 
 pub fn sys_context_clear() -> isize {
     syscall(SYSCALL_CONTEXT_CLEAR, [0, 0, 0])
+}
+
+pub fn sys_agent_heartbeat_set(interval_ms: usize) -> isize {
+    syscall(SYSCALL_AGENT_HEARTBEAT_SET, [interval_ms, 0, 0])
+}
+
+pub fn sys_agent_heartbeat_stop() -> isize {
+    syscall(SYSCALL_AGENT_HEARTBEAT_STOP, [0, 0, 0])
+}
+
+pub fn sys_agent_wait() -> isize {
+    syscall(SYSCALL_AGENT_WAIT, [0, 0, 0])
 }
