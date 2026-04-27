@@ -31,7 +31,7 @@ fn call_tool(request: &ToolRequest, info: &AgentInfo) -> ToolResponse {
 #[unsafe(no_mangle)]
 pub fn main() -> i32 {
     let mut tools = [ToolInfo::default(); 4];
-    assert_eq!(tool_list(&mut tools), 3);
+    assert!(tool_list(&mut tools) >= 3);
     assert_eq!(tools[0].tool_id, TOOL_GET_SYSTEM_STATUS);
     assert_eq!(tools[1].tool_id, TOOL_QUERY_PROCESS);
     assert_eq!(tools[2].tool_id, TOOL_SEND_MESSAGE);

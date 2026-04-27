@@ -13,12 +13,17 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cmp::min;
 use core::mem::size_of;
+use lazy_static::*;
 
 pub const TOOL_GET_SYSTEM_STATUS: usize = 1;
 pub const TOOL_QUERY_PROCESS: usize = 2;
 pub const TOOL_SEND_MESSAGE: usize = 3;
+pub const TOOL_QUERY_FILE: usize = 4;
 const TOOL_MAX_PARAMS: usize = 4;
 const TOOL_QUERY_MAX_ITEMS: usize = 8;
+const TOOL_FILE_QUERY_MAX_ITEMS: usize = 8;
+const FILE_ATTR_MAX_ENTRIES: usize = 16;
+const FILE_PATH_MAX_LEN: usize = 32;
 
 const TOOL_STATUS_OK: isize = 0;
 const TOOL_ERR_NOT_AGENT: isize = -3;
@@ -31,6 +36,10 @@ const CONTEXT_QUERY_MAX_NODES: usize = 8;
 const TOOL_PARAM_STATUS: usize = 1;
 const TOOL_PARAM_AGENT_TYPE: usize = 2;
 const TOOL_PARAM_TARGET_PID: usize = 10;
+const TOOL_PARAM_FILE_TYPE: usize = 20;
+const TOOL_PARAM_FILE_OWNER: usize = 21;
+const TOOL_PARAM_FILE_TAG: usize = 22;
+const TOOL_PARAM_FILE_PRIORITY: usize = 23;
 const TOOL_VALUE_U64: usize = 1;
 
 /// User-visible Agent metadata returned by `sys_agent_info`.
@@ -127,6 +136,37 @@ pub struct ToolMessageResult {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+pub struct FileAttrSetRequest {
+    pub path_ptr: usize,
+    pub file_type: usize,
+    pub owner: usize,
+    pub tag: usize,
+    pub priority: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ToolFileSummary {
+    pub path_len: usize,
+    pub path: [u8; FILE_PATH_MAX_LEN],
+    pub file_type: usize,
+    pub owner: usize,
+    pub tag: usize,
+    pub priority: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ToolFileQueryResult {
+    pub total_matches: usize,
+    pub returned: usize,
+    pub traversal_visits: usize,
+    pub indexed_visits: usize,
+    pub items: [ToolFileSummary; TOOL_FILE_QUERY_MAX_ITEMS],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
 pub struct ContextPushRequest {
     pub tool_id: usize,
     pub flags: usize,
@@ -150,6 +190,63 @@ pub struct ContextQueryResult {
     pub active_node_id: usize,
     pub write_offset: usize,
     pub nodes: [ContextNode; CONTEXT_QUERY_MAX_NODES],
+}
+
+#[derive(Copy, Clone)]
+struct FileAttrEntry {
+    used: bool,
+    path_len: usize,
+    path: [u8; FILE_PATH_MAX_LEN],
+    file_type: usize,
+    owner: usize,
+    tag: usize,
+    priority: usize,
+}
+
+impl FileAttrEntry {
+    const fn empty() -> Self {
+        Self {
+            used: false,
+            path_len: 0,
+            path: [0; FILE_PATH_MAX_LEN],
+            file_type: 0,
+            owner: 0,
+            tag: 0,
+            priority: 0,
+        }
+    }
+
+    fn matches_path(&self, path: &[u8]) -> bool {
+        self.used && self.path_len == path.len() && &self.path[..self.path_len] == path
+    }
+
+    fn summary(&self) -> ToolFileSummary {
+        ToolFileSummary {
+            path_len: self.path_len,
+            path: self.path,
+            file_type: self.file_type,
+            owner: self.owner,
+            tag: self.tag,
+            priority: self.priority,
+        }
+    }
+}
+
+struct FileAttrTable {
+    entries: [FileAttrEntry; FILE_ATTR_MAX_ENTRIES],
+}
+
+impl FileAttrTable {
+    const fn new() -> Self {
+        Self {
+            entries: [FileAttrEntry::empty(); FILE_ATTR_MAX_ENTRIES],
+        }
+    }
+}
+
+lazy_static! {
+    static ref FILE_ATTR_TABLE: crate::sync::UPSafeCell<FileAttrTable> =
+        unsafe { crate::sync::UPSafeCell::new(FileAttrTable::new()) };
 }
 
 pub fn sys_exit(exit_code: i32) -> ! {
@@ -528,6 +625,90 @@ fn build_process_query(request: &ToolRequest) -> Result<ToolProcessQueryResult, 
     Ok(result)
 }
 
+fn copy_path_to_fixed(path: &str) -> Result<([u8; FILE_PATH_MAX_LEN], usize), isize> {
+    let bytes = path.as_bytes();
+    if bytes.is_empty() || bytes.len() > FILE_PATH_MAX_LEN {
+        return Err(TOOL_ERR_BAD_PARAM);
+    }
+    let mut fixed = [0u8; FILE_PATH_MAX_LEN];
+    fixed[..bytes.len()].copy_from_slice(bytes);
+    Ok((fixed, bytes.len()))
+}
+
+fn entry_matches_query(entry: FileAttrEntry, request: &ToolRequest) -> bool {
+    if let Some(file_type) = get_param(request, TOOL_PARAM_FILE_TYPE) {
+        if entry.file_type != file_type {
+            return false;
+        }
+    }
+    if let Some(owner) = get_param(request, TOOL_PARAM_FILE_OWNER) {
+        if entry.owner != owner {
+            return false;
+        }
+    }
+    if let Some(tag) = get_param(request, TOOL_PARAM_FILE_TAG) {
+        if entry.tag != tag {
+            return false;
+        }
+    }
+    if let Some(priority) = get_param(request, TOOL_PARAM_FILE_PRIORITY) {
+        if entry.priority != priority {
+            return false;
+        }
+    }
+    true
+}
+
+fn entry_matches_index_key(entry: FileAttrEntry, request: &ToolRequest) -> bool {
+    if let Some(file_type) = get_param(request, TOOL_PARAM_FILE_TYPE) {
+        return entry.file_type == file_type;
+    }
+    if let Some(owner) = get_param(request, TOOL_PARAM_FILE_OWNER) {
+        return entry.owner == owner;
+    }
+    if let Some(tag) = get_param(request, TOOL_PARAM_FILE_TAG) {
+        return entry.tag == tag;
+    }
+    if let Some(priority) = get_param(request, TOOL_PARAM_FILE_PRIORITY) {
+        return entry.priority == priority;
+    }
+    true
+}
+
+fn build_file_query(request: &ToolRequest) -> Result<ToolFileQueryResult, isize> {
+    if !validate_u64_params(request) {
+        return Err(TOOL_ERR_BAD_PARAM);
+    }
+    let empty = FileAttrEntry::empty().summary();
+    let mut result = ToolFileQueryResult {
+        total_matches: 0,
+        returned: 0,
+        traversal_visits: 0,
+        indexed_visits: 0,
+        items: [empty; TOOL_FILE_QUERY_MAX_ITEMS],
+    };
+    let table = FILE_ATTR_TABLE.exclusive_access();
+    for entry in table.entries.iter().copied() {
+        if !entry.used {
+            continue;
+        }
+        result.traversal_visits += 1;
+        if !entry_matches_index_key(entry, request) {
+            continue;
+        }
+        result.indexed_visits += 1;
+        if !entry_matches_query(entry, request) {
+            continue;
+        }
+        result.total_matches += 1;
+        if result.returned < TOOL_FILE_QUERY_MAX_ITEMS {
+            result.items[result.returned] = entry.summary();
+            result.returned += 1;
+        }
+    }
+    Ok(result)
+}
+
 pub fn sys_tool_call(request_ptr: *const ToolRequest, response_ptr: *mut ToolResponse) -> isize {
     let token = current_user_token();
     let request = *translated_ref(token, request_ptr);
@@ -584,6 +765,10 @@ pub fn sys_tool_call(request_ptr: *const ToolRequest, response_ptr: *mut ToolRes
                 write_tool_response(token, response_ptr, TOOL_ERR_NOT_FOUND, 0, 0)
             }
         }
+        TOOL_QUERY_FILE => match build_file_query(&request) {
+            Ok(result) => write_result(result_bytes(&result)),
+            Err(err) => write_tool_response(token, response_ptr, err, 0, 0),
+        },
         _ => write_tool_response(token, response_ptr, TOOL_ERR_UNKNOWN_TOOL, 0, 0),
     }
 }
@@ -606,12 +791,68 @@ pub fn sys_tool_list(info_ptr: *mut ToolInfo, capacity: usize) -> isize {
             max_params: 1,
             flags: 0,
         },
+        ToolInfo {
+            tool_id: TOOL_QUERY_FILE,
+            max_params: TOOL_MAX_PARAMS,
+            flags: 0,
+        },
     ];
     let n = min(capacity, tools.len());
     for i in 0..n {
         *translated_refmut(token, unsafe { info_ptr.add(i) }) = tools[i];
     }
     tools.len() as isize
+}
+
+pub fn sys_file_attr_set(request_ptr: *const FileAttrSetRequest) -> isize {
+    let token = current_user_token();
+    let request = *translated_ref(token, request_ptr);
+    let path = translated_str(token, request.path_ptr as *const u8);
+    if open_file(path.as_str(), OpenFlags::RDONLY).is_none() {
+        return TOOL_ERR_NOT_FOUND;
+    }
+    let (path_bytes, path_len) = match copy_path_to_fixed(path.as_str()) {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
+    let mut table = FILE_ATTR_TABLE.exclusive_access();
+    let mut slot = None;
+    for i in 0..FILE_ATTR_MAX_ENTRIES {
+        if table.entries[i].matches_path(&path_bytes[..path_len]) {
+            slot = Some(i);
+            break;
+        }
+        if !table.entries[i].used && slot.is_none() {
+            slot = Some(i);
+        }
+    }
+    let Some(index) = slot else {
+        return TOOL_ERR_CONTEXT_FULL;
+    };
+    table.entries[index] = FileAttrEntry {
+        used: true,
+        path_len,
+        path: path_bytes,
+        file_type: request.file_type,
+        owner: request.owner,
+        tag: request.tag,
+        priority: request.priority,
+    };
+    TOOL_STATUS_OK
+}
+
+pub fn sys_file_attr_delete(path_ptr: *const u8) -> isize {
+    let token = current_user_token();
+    let path = translated_str(token, path_ptr);
+    let path_bytes = path.as_bytes();
+    let mut table = FILE_ATTR_TABLE.exclusive_access();
+    for i in 0..FILE_ATTR_MAX_ENTRIES {
+        if table.entries[i].matches_path(path_bytes) {
+            table.entries[i] = FileAttrEntry::empty();
+            return TOOL_STATUS_OK;
+        }
+    }
+    TOOL_ERR_NOT_FOUND
 }
 
 fn push_context_node(meta: &mut AgentMeta, node: ContextNode) {

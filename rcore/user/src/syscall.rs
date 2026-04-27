@@ -22,15 +22,24 @@ const SYSCALL_CONTEXT_CLEAR: usize = 507;
 const SYSCALL_AGENT_HEARTBEAT_SET: usize = 508;
 const SYSCALL_AGENT_HEARTBEAT_STOP: usize = 509;
 const SYSCALL_AGENT_WAIT: usize = 510;
+const SYSCALL_FILE_ATTR_SET: usize = 511;
+const SYSCALL_FILE_ATTR_DELETE: usize = 512;
 
 pub const TOOL_GET_SYSTEM_STATUS: usize = 1;
 pub const TOOL_QUERY_PROCESS: usize = 2;
 pub const TOOL_SEND_MESSAGE: usize = 3;
+pub const TOOL_QUERY_FILE: usize = 4;
 pub const TOOL_MAX_PARAMS: usize = 4;
 pub const TOOL_QUERY_MAX_ITEMS: usize = 8;
+pub const TOOL_FILE_QUERY_MAX_ITEMS: usize = 8;
+pub const FILE_PATH_MAX_LEN: usize = 32;
 pub const TOOL_PARAM_STATUS: usize = 1;
 pub const TOOL_PARAM_AGENT_TYPE: usize = 2;
 pub const TOOL_PARAM_TARGET_PID: usize = 10;
+pub const TOOL_PARAM_FILE_TYPE: usize = 20;
+pub const TOOL_PARAM_FILE_OWNER: usize = 21;
+pub const TOOL_PARAM_FILE_TAG: usize = 22;
+pub const TOOL_PARAM_FILE_PRIORITY: usize = 23;
 pub const TOOL_VALUE_U64: usize = 1;
 pub const CONTEXT_QUERY_MAX_NODES: usize = 8;
 pub const AGENT_WAKE_HEARTBEAT: usize = 1;
@@ -119,6 +128,37 @@ pub struct ToolMessageResult {
     pub target_pid: usize,
     pub target_agent_type: usize,
     pub accepted: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct FileAttrSetRequest {
+    pub path_ptr: usize,
+    pub file_type: usize,
+    pub owner: usize,
+    pub tag: usize,
+    pub priority: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolFileSummary {
+    pub path_len: usize,
+    pub path: [u8; FILE_PATH_MAX_LEN],
+    pub file_type: usize,
+    pub owner: usize,
+    pub tag: usize,
+    pub priority: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolFileQueryResult {
+    pub total_matches: usize,
+    pub returned: usize,
+    pub traversal_visits: usize,
+    pub indexed_visits: usize,
+    pub items: [ToolFileSummary; TOOL_FILE_QUERY_MAX_ITEMS],
 }
 
 #[repr(C)]
@@ -290,4 +330,12 @@ pub fn sys_agent_heartbeat_stop() -> isize {
 
 pub fn sys_agent_wait() -> isize {
     syscall(SYSCALL_AGENT_WAIT, [0, 0, 0])
+}
+
+pub fn sys_file_attr_set(request: &FileAttrSetRequest) -> isize {
+    syscall(SYSCALL_FILE_ATTR_SET, [request as *const _ as usize, 0, 0])
+}
+
+pub fn sys_file_attr_delete(path: &str) -> isize {
+    syscall(SYSCALL_FILE_ATTR_DELETE, [path.as_ptr() as usize, 0, 0])
 }
