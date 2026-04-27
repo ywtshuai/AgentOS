@@ -1,0 +1,8 @@
+target/
+*.bin
+!rcore/bootloader/*.bin
+*.asm
+*.img
+*.log
+.DS_Store
+Thumbs.db
