@@ -30,7 +30,7 @@ pub use context::TaskContext;
 use lazy_static::*;
 pub use manager::{TaskManager, fetch_task};
 use switch::__switch;
-use task::{TaskControlBlock, TaskStatus};
+use task::TaskStatus;
 
 pub use manager::add_task;
 pub use pid::{KernelStack, PidAllocator, PidHandle, pid_alloc};
@@ -38,6 +38,7 @@ pub use processor::{
     Processor, current_task, current_trap_cx, current_user_token, run_tasks, schedule,
     take_current_task,
 };
+pub(crate) use task::{AgentMeta, TaskControlBlock};
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.

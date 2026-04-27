@@ -13,6 +13,7 @@ extern crate bitflags;
 
 use buddy_system_allocator::LockedHeap;
 use core::ptr::addr_of_mut;
+pub use syscall::{AgentCreateArgs, AgentInfo};
 use syscall::*;
 
 const USER_HEAP_SIZE: usize = 32768;
@@ -111,4 +112,21 @@ pub fn sleep(period_ms: usize) {
     while sys_get_time() < start + period_ms as isize {
         sys_yield();
     }
+}
+pub fn agent_create(
+    path: &str,
+    agent_type: usize,
+    heartbeat_interval: usize,
+    resource_quota: usize,
+) -> isize {
+    let args = AgentCreateArgs {
+        path: path.as_ptr(),
+        agent_type,
+        heartbeat_interval,
+        resource_quota,
+    };
+    sys_agent_create(&args)
+}
+pub fn agent_info(pid: isize, info: &mut AgentInfo) -> isize {
+    sys_agent_info(pid, info)
 }

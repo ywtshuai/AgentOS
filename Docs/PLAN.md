@@ -240,3 +240,183 @@ Agent Loop 测试：
 - 默认协议采用固定结构体或 TLV，不采用完整 JSON。
 - 默认文件属性系统先以内存态实现，保证演示和评分点；如时间充足再做持久化。
 - 默认综合演示选择“Agent 系统管理员”，因为稳定、容易讲清楚、工程风险低。
+
+## Milestone Breakdown
+
+### M0: Project Baseline
+
+目标：
+
+- 初始化或同步远程 Git 仓库。
+- 引入 rCore-Tutorial v3 基础代码。
+- 确认 Rust、QEMU、RISC-V target、构建脚本可用。
+- 修正文档编码，建立里程碑文档目录规范。
+
+交付：
+
+- 项目能完成基础构建或明确记录缺失环境。
+- `Docs/M0/DESIGN.md`
+- `Docs/M0/IMPLEMENTATION_LOG.md`
+- `Docs/M0/TEST_REPORT.md`
+
+### M1: Agent Process Metadata
+
+目标：
+
+- 扩展 PCB / task control block，加入 Agent 元信息。
+- 实现 Agent 类型标识、资源配额、Loop 状态、Context 元信息字段。
+- 实现 `sys_agent_info`，用于查询当前进程或指定进程的 Agent 元信息。
+- 提供用户态 M1 测试程序验证普通进程与 Agent 元信息不互相影响。
+
+交付：
+
+- Agent 元信息结构稳定。
+- 普通进程默认不是 Agent。
+- Agent 元信息查询 syscall 可用。
+- `Docs/M1/DESIGN.md`
+- `Docs/M1/IMPLEMENTATION_LOG.md`
+- `Docs/M1/TEST_REPORT.md`
+
+### M2: Agent Context Address Space
+
+目标：
+
+- 在 Agent 进程用户地址空间中映射固定大小的 Agent Context 区。
+- 实现 `sys_agent_create` 或等价创建/标记机制，初始化 PCB 字段并分配 Context 区。
+- 让用户态 Agent 能直接读写自己的 Context 区。
+
+交付：
+
+- Agent Context 默认大小为 `64KB`。
+- 内核记录 `agent_context_base` 和 `agent_context_size`。
+- 测试覆盖 Context 区读写、越界保护、普通进程兼容性。
+- `Docs/M2/DESIGN.md`
+- `Docs/M2/IMPLEMENTATION_LOG.md`
+- `Docs/M2/TEST_REPORT.md`
+
+### M3: Structured Tool Call Interface
+
+目标：
+
+- 定义固定结构体或 TLV 风格 Tool Call 协议。
+- 实现 `sys_tool_list` 和 `sys_tool_call`。
+- 实现至少 3 个内核工具：
+  - `get_system_status`
+  - `query_process`
+  - `send_message`
+
+交付：
+
+- 用户态 Agent 可调用 3 个工具并得到结构化响应。
+- 错误 tool id、参数数量错误、参数类型错误都有明确错误码。
+- 工具结果优先写入 Agent Context 区，响应中返回 offset/length。
+- `Docs/M3/DESIGN.md`
+- `Docs/M3/IMPLEMENTATION_LOG.md`
+- `Docs/M3/TEST_REPORT.md`
+
+### M4: Context Path Management
+
+目标：
+
+- 在 Agent Context 区实现 Context Path 环形缓冲区。
+- 实现 `sys_context_push`、`sys_context_query`、`sys_context_rollback`、`sys_context_clear`。
+- 内核维护路径元信息，用户态存储请求摘要和结果摘要。
+
+交付：
+
+- Agent 可连续记录至少 5 轮工具调用。
+- rollback 和 clear 行为正确。
+- 超过 quota 后执行 FIFO 淘汰。
+- `Docs/M4/DESIGN.md`
+- `Docs/M4/IMPLEMENTATION_LOG.md`
+- `Docs/M4/TEST_REPORT.md`
+
+### M5: Agent Loop Wakeup
+
+目标：
+
+- 实现 Agent 心跳机制。
+- 实现 `sys_agent_heartbeat_set`、`sys_agent_heartbeat_stop`、`sys_agent_wait`。
+- 让 `send_message` 可以唤醒等待中的目标 Agent。
+
+交付：
+
+- Agent 无事件时能 sleep/wait，不持续占用 CPU。
+- 心跳到达后 Agent 被唤醒。
+- 消息到达后目标 Agent 被唤醒。
+- 多 Agent demo 稳定运行。
+- `Docs/M5/DESIGN.md`
+- `Docs/M5/IMPLEMENTATION_LOG.md`
+- `Docs/M5/TEST_REPORT.md`
+
+### M6: File Attribute Query
+
+目标：
+
+- 实现内存态文件属性表。
+- 支持文件属性设置、查询、删除。
+- 支持至少 `type`、`owner`、`tag`、`priority` 四类属性。
+- 实现 `query_file` 工具。
+
+交付：
+
+- Agent 可通过属性查询文件，无需事先知道完整路径。
+- 支持多条件 AND 查询。
+- 提供遍历查询与属性查询的对比测试。
+- `Docs/M6/DESIGN.md`
+- `Docs/M6/IMPLEMENTATION_LOG.md`
+- `Docs/M6/TEST_REPORT.md`
+
+### M7: Integrated Demo
+
+目标：
+
+- 实现“Agent 系统管理员”综合演示。
+- 整合 Agent 创建、Tool Call、Context Path、心跳/消息唤醒、文件属性查询。
+- 提供可重复运行的用户态 demo 命令。
+
+交付：
+
+- `agent_demo basic`
+- `agent_demo loop`
+- `agent_demo fs_query_bench`
+- `agent_demo full`
+- demo 输出能清晰展示每轮 Agent Loop 和 Context Path。
+- `Docs/M7/DESIGN.md`
+- `Docs/M7/IMPLEMENTATION_LOG.md`
+- `Docs/M7/TEST_REPORT.md`
+
+### M8: Final Documentation And Evaluation
+
+目标：
+
+- 汇总系统设计、测试结果、性能评估和演示说明。
+- 完善 README、设计文档、评估文档。
+- 做最终构建、测试、QEMU demo 验证。
+
+交付：
+
+- `README.md`
+- `Docs/DESIGN.md`
+- `Docs/EVALUATION.md`
+- `Docs/M8/DESIGN.md`
+- `Docs/M8/IMPLEMENTATION_LOG.md`
+- `Docs/M8/TEST_REPORT.md`
+- 远程分支 `feature/agent-os` 与本地最终状态同步。
+
+## Execution Protocol
+
+Work milestone by milestone.
+
+For each milestone Mx:
+1. Implement the scoped feature.
+2. Run build/tests/demo checks relevant to Mx.
+3. Fix failures before moving on.
+4. Update:
+   - Docs/Mx/DESIGN.md
+   - Docs/Mx/IMPLEMENTATION_LOG.md
+   - Docs/Mx/TEST_REPORT.md
+5. Commit with message: `Mx: <summary>`.
+6. Push to remote branch `feature/agent-os`.
+
+No PR is required. The remote repository is synchronized by milestone pushes.
