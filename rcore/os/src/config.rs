@@ -2,10 +2,6 @@
 #[allow(unused)]
 
 pub const USER_STACK_SIZE: usize = 4096 * 2;
-/// Size of the per-agent user-writable context area.
-pub const AGENT_CONTEXT_SIZE: usize = 64 * 1024;
-/// Fixed base virtual address for the per-agent context area.
-pub const AGENT_CONTEXT_BASE: usize = 0x1000_0000;
 pub const KERNEL_STACK_SIZE: usize = 4096 * 2;
 pub const KERNEL_HEAP_SIZE: usize = 0x20_0000;
 

@@ -1,24 +1,11 @@
 use crate::fs::{OpenFlags, open_file};
-use crate::mm::{translated_ref, translated_refmut, translated_str};
+use crate::mm::{translated_refmut, translated_str};
 use crate::task::{
-    add_task, current_task, current_user_token, exit_current_and_run_next,
-    suspend_current_and_run_next, AgentMeta, TaskControlBlock,
+    AgentMeta, INITPROC, TaskControlBlock, add_task, current_task, current_user_token,
+    exit_current_and_run_next, suspend_current_and_run_next,
 };
 use crate::timer::get_time_ms;
 use alloc::sync::Arc;
-
-/// User-provided arguments for `sys_agent_create`.
-#[repr(C)]
-pub struct AgentCreateArgs {
-    /// Null-terminated executable path in the root filesystem.
-    pub path: *const u8,
-    /// User-defined agent kind.
-    pub agent_type: usize,
-    /// Initial heartbeat interval in milliseconds.
-    pub heartbeat_interval: usize,
-    /// Agent context/resource quota in bytes.
-    pub resource_quota: usize,
-}
 
 /// User-visible Agent metadata returned by `sys_agent_info`.
 #[repr(C)]
@@ -136,48 +123,34 @@ fn fill_agent_info(pid: usize, meta: AgentMeta, info_ptr: *mut AgentInfo, token:
     };
 }
 
-/// Create a new Agent process from an executable path.
-pub fn sys_agent_create(args_ptr: *const AgentCreateArgs) -> isize {
-    let token = current_user_token();
-    let args = translated_ref(token, args_ptr);
-    let path = translated_str(token, args.path);
-    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
-        let parent = current_task().unwrap();
-        let all_data = app_inode.read_all();
-        let new_task = TaskControlBlock::new_agent(
-            &parent,
-            all_data.as_slice(),
-            args.agent_type,
-            args.heartbeat_interval,
-            args.resource_quota,
-        );
-        let pid = new_task.pid.0;
-        add_task(new_task);
-        pid as isize
-    } else {
-        -1
+fn find_agent_meta(task: Arc<TaskControlBlock>, pid: usize) -> Option<(usize, Option<AgentMeta>)> {
+    let inner = task.inner_exclusive_access();
+    if task.pid.0 == pid {
+        return Some((task.pid.0, inner.agent));
     }
+    let children = inner.children.clone();
+    drop(inner);
+    for child in children {
+        if let Some(meta) = find_agent_meta(child, pid) {
+            return Some(meta);
+        }
+    }
+    None
 }
 
-/// Return Agent metadata for the current process or a direct child.
+/// Return Agent metadata for the current process or a process in the task tree.
 pub fn sys_agent_info(pid: isize, info_ptr: *mut AgentInfo) -> isize {
     let task = current_task().unwrap();
     let token = current_user_token();
-    let inner = task.inner_exclusive_access();
-    if pid == -1 || pid as usize == task.pid.0 {
-        if let Some(meta) = inner.agent {
-            fill_agent_info(task.pid.0, meta, info_ptr, token);
-            return 0;
+    let target_pid = if pid == -1 { task.pid.0 } else { pid as usize };
+    if let Some((found_pid, meta)) = find_agent_meta(INITPROC.clone(), target_pid) {
+        if let Some(meta) = meta {
+            fill_agent_info(found_pid, meta, info_ptr, token);
+            0
+        } else {
+            -2
         }
-        return -2;
+    } else {
+        -1
     }
-    if let Some(child) = inner.children.iter().find(|child| child.pid.0 == pid as usize) {
-        let child_inner = child.inner_exclusive_access();
-        if let Some(meta) = child_inner.agent {
-            fill_agent_info(child.pid.0, meta, info_ptr, token);
-            return 0;
-        }
-        return -2;
-    }
-    -1
 }

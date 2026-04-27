@@ -4,10 +4,7 @@ use super::{FrameTracker, frame_alloc};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
-use crate::config::{
-    AGENT_CONTEXT_BASE, AGENT_CONTEXT_SIZE, MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE,
-    TRAP_CONTEXT, USER_STACK_SIZE,
-};
+use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE};
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -66,14 +63,6 @@ impl MemorySet {
         self.push(
             MapArea::new(start_va, end_va, MapType::Framed, permission),
             None,
-        );
-    }
-    /// Map the fixed per-agent context area into a user address space.
-    pub fn map_agent_context(&mut self) {
-        self.insert_framed_area(
-            AGENT_CONTEXT_BASE.into(),
-            (AGENT_CONTEXT_BASE + AGENT_CONTEXT_SIZE).into(),
-            MapPermission::R | MapPermission::W | MapPermission::U,
         );
     }
     ///Remove `MapArea` that starts with `start_vpn`

@@ -2,30 +2,33 @@
 
 ## 计划验证项
 
-- 普通进程仍可正常创建和等待子进程。
-- 普通进程调用 `agent_info(-1, ...)` 返回 `-2`。
-- `agent_create` 可以创建 Agent 子进程并返回 pid。
-- 父进程可以查询直接 Agent 子进程的元数据。
-- Agent 子进程可以查询自身元数据。
-- Agent 子进程可以直接读写 64KB Agent Context 区域首尾地址。
+- 普通进程默认不是 Agent。
+- 普通子进程默认不是 Agent。
+- `sys_agent_info(-1, ...)` 可以查询当前进程，并在当前进程不是 Agent 时返回 `-2`。
+- `sys_agent_info(pid, ...)` 可以查找指定 pid，并在目标进程不是 Agent 时返回 `-2`。
+- M1 不验证 Agent Context 读写，相关测试移到 M2。
 
-## 新增测试程序
+## 测试程序
 
 ```text
 agent_m1
-agent_m1_child
 ```
 
-`agent_m1` 会创建 `agent_m1_child`，校验 pid、agent type、heartbeat interval、resource quota 和 context size，然后等待子进程退出。
+`agent_m1` 执行流程：
 
-`agent_m1_child` 会查询自身 Agent 元数据，并对 Agent Context 的第一个字节和最后一个字节执行 volatile 写读校验。
+1. 当前进程调用 `agent_info(-1, ...)`，期望返回 `-2`。
+2. `fork()` 创建普通子进程。
+3. 子进程调用 `agent_info(-1, ...)`，期望返回 `-2`。
+4. 父进程调用 `agent_info(child_pid, ...)`，期望返回 `-2`。
+5. 父进程等待子进程退出，期望退出码为 `0`。
 
 ## 已执行命令
 
 ```powershell
 cargo fmt
 .\scripts\check-env.ps1 -Strict
-rg "Agent|agent_|SYSCALL_AGENT|AGENT_CONTEXT|TaskControlBlock" rcore/os/src rcore/user/src -n
+git diff --check
+rg "agent_create|sys_agent_create|AGENT_CONTEXT_BASE|AGENT_CONTEXT_SIZE|map_agent_context" rcore/os/src rcore/user/src -n
 ```
 
 ## 结果
@@ -37,7 +40,8 @@ rg "Agent|agent_|SYSCALL_AGENT|AGENT_CONTEXT|TaskControlBlock" rcore/os/src rcor
   - `cargo`
   - `make`
   - `qemu-system-riscv64`
-- `rg ...`：通过，用于确认 M1 相关入口、常量、syscall 分发、用户态封装和测试程序均已落到预期文件。
+- `git diff --check`：通过，未发现空白错误。
+- `rg ...`：无匹配，退出码为 `1`，表示代码中不再包含 Agent 创建和 Context 映射入口。
 
 ## 未能执行的命令
 
@@ -66,6 +70,6 @@ agent_m1
 预期输出包括：
 
 ```text
-agent_m1_child passed
+agent_m1 child passed
 agent_m1 passed
 ```
