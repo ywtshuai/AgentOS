@@ -1,9 +1,9 @@
 //!Implementation of [`TaskControlBlock`]
 use super::TaskContext;
 use super::{KernelStack, PidHandle, pid_alloc};
-use crate::config::TRAP_CONTEXT;
+use crate::config::{AGENT_CONTEXT_BASE, AGENT_CONTEXT_SIZE, TRAP_CONTEXT};
 use crate::fs::{File, Stdin, Stdout};
-use crate::mm::{KERNEL_SPACE, MemorySet, PhysPageNum, VirtAddr};
+use crate::mm::{KERNEL_SPACE, MapPermission, MemorySet, PhysPageNum, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::{TrapContext, trap_handler};
 use alloc::sync::{Arc, Weak};
@@ -78,8 +78,8 @@ impl AgentMeta {
             resource_quota,
             loop_state: AgentLoopState::Ready,
             context_path_meta: 0,
-            agent_context_base: 0,
-            agent_context_size: 0,
+            agent_context_base: AGENT_CONTEXT_BASE,
+            agent_context_size: AGENT_CONTEXT_SIZE,
         }
     }
 }
@@ -160,8 +160,15 @@ impl TaskControlBlock {
     }
     pub fn exec(&self, elf_data: &[u8]) {
         // memory_set with elf program headers/trampoline/trap context/user stack
-        let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
+        let (mut memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
         let agent = self.inner_exclusive_access().agent;
+        if agent.is_some() {
+            assert!(memory_set.insert_framed_area_checked(
+                AGENT_CONTEXT_BASE.into(),
+                (AGENT_CONTEXT_BASE + AGENT_CONTEXT_SIZE).into(),
+                MapPermission::R | MapPermission::W | MapPermission::U,
+            ));
+        }
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT).into())
             .unwrap()

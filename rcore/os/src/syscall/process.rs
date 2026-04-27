@@ -1,5 +1,6 @@
+use crate::config::{AGENT_CONTEXT_BASE, AGENT_CONTEXT_SIZE};
 use crate::fs::{OpenFlags, open_file};
-use crate::mm::{translated_refmut, translated_str};
+use crate::mm::{MapPermission, translated_refmut, translated_str};
 use crate::task::{
     AgentMeta, INITPROC, TaskControlBlock, add_task, current_task, current_user_token,
     exit_current_and_run_next, suspend_current_and_run_next,
@@ -108,6 +109,32 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
         -2
     }
     // ---- release current PCB automatically
+}
+
+/// Mark the current process as an Agent and map its Agent Context area.
+pub fn sys_agent_create(
+    agent_type: usize,
+    heartbeat_interval: usize,
+    resource_quota: usize,
+) -> isize {
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    if inner.agent.is_some() {
+        return -1;
+    }
+    if !inner.memory_set.insert_framed_area_checked(
+        AGENT_CONTEXT_BASE.into(),
+        (AGENT_CONTEXT_BASE + AGENT_CONTEXT_SIZE).into(),
+        MapPermission::R | MapPermission::W | MapPermission::U,
+    ) {
+        return -2;
+    }
+    inner.agent = Some(AgentMeta::new(
+        agent_type,
+        heartbeat_interval,
+        resource_quota,
+    ));
+    0
 }
 
 fn fill_agent_info(pid: usize, meta: AgentMeta, info_ptr: *mut AgentInfo, token: usize) {

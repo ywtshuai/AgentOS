@@ -65,6 +65,22 @@ impl MemorySet {
             None,
         );
     }
+    /// Insert a user-accessible framed range if every page is currently unmapped.
+    pub fn insert_framed_area_checked(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> bool {
+        let area = MapArea::new(start_va, end_va, MapType::Framed, permission);
+        for vpn in area.vpn_range {
+            if self.translate(vpn).is_some_and(|pte| pte.is_valid()) {
+                return false;
+            }
+        }
+        self.push(area, None);
+        true
+    }
     ///Remove `MapArea` that starts with `start_vpn`
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         if let Some((idx, area)) = self

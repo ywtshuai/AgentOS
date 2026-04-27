@@ -17,6 +17,7 @@ pub use syscall::AgentInfo;
 use syscall::*;
 
 const USER_HEAP_SIZE: usize = 32768;
+pub const AGENT_CONTEXT_SIZE: usize = 64 * 1024;
 
 static mut HEAP_SPACE: [u8; USER_HEAP_SIZE] = [0; USER_HEAP_SIZE];
 
@@ -112,6 +113,9 @@ pub fn sleep(period_ms: usize) {
     while sys_get_time() < start + period_ms as isize {
         sys_yield();
     }
+}
+pub fn agent_create(agent_type: usize, heartbeat_interval: usize, resource_quota: usize) -> isize {
+    sys_agent_create(agent_type, heartbeat_interval, resource_quota)
 }
 pub fn agent_info(pid: isize, info: &mut AgentInfo) -> isize {
     sys_agent_info(pid, info)

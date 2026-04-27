@@ -11,6 +11,7 @@ const SYSCALL_GETPID: usize = 172;
 const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXEC: usize = 221;
 const SYSCALL_WAITPID: usize = 260;
+const SYSCALL_AGENT_CREATE: usize = 500;
 const SYSCALL_AGENT_INFO: usize = 501;
 
 #[repr(C)]
@@ -86,6 +87,17 @@ pub fn sys_exec(path: &str) -> isize {
 
 pub fn sys_waitpid(pid: isize, exit_code: *mut i32) -> isize {
     syscall(SYSCALL_WAITPID, [pid as usize, exit_code as usize, 0])
+}
+
+pub fn sys_agent_create(
+    agent_type: usize,
+    heartbeat_interval: usize,
+    resource_quota: usize,
+) -> isize {
+    syscall(
+        SYSCALL_AGENT_CREATE,
+        [agent_type, heartbeat_interval, resource_quota],
+    )
 }
 
 pub fn sys_agent_info(pid: isize, info: &mut AgentInfo) -> isize {

@@ -4,7 +4,7 @@
 #[macro_use]
 extern crate user_lib;
 
-use user_lib::{agent_info, fork, waitpid, AgentInfo};
+use user_lib::{AgentInfo, agent_info, fork, waitpid};
 
 #[unsafe(no_mangle)]
 pub fn main() -> i32 {

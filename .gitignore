@@ -2,6 +2,7 @@ target/
 *.bin
 !rcore/bootloader/*.bin
 *.asm
+!rcore/os/src/entry.asm
 *.img
 *.log
 .DS_Store
