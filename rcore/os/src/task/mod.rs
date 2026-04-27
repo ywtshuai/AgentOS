@@ -38,7 +38,10 @@ pub use processor::{
     Processor, current_task, current_trap_cx, current_user_token, run_tasks, schedule,
     take_current_task,
 };
-pub(crate) use task::{AgentLoopState, AgentMeta, TaskControlBlock, TaskControlBlockInner};
+pub(crate) use task::{
+    AgentLoopState, AgentMeta, CONTEXT_MAX_NODES, ContextNode, TaskControlBlock,
+    TaskControlBlockInner,
+};
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.

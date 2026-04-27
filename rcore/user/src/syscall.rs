@@ -15,6 +15,10 @@ const SYSCALL_AGENT_CREATE: usize = 500;
 const SYSCALL_AGENT_INFO: usize = 501;
 const SYSCALL_TOOL_CALL: usize = 502;
 const SYSCALL_TOOL_LIST: usize = 503;
+const SYSCALL_CONTEXT_PUSH: usize = 504;
+const SYSCALL_CONTEXT_QUERY: usize = 505;
+const SYSCALL_CONTEXT_ROLLBACK: usize = 506;
+const SYSCALL_CONTEXT_CLEAR: usize = 507;
 
 pub const TOOL_GET_SYSTEM_STATUS: usize = 1;
 pub const TOOL_QUERY_PROCESS: usize = 2;
@@ -25,6 +29,7 @@ pub const TOOL_PARAM_STATUS: usize = 1;
 pub const TOOL_PARAM_AGENT_TYPE: usize = 2;
 pub const TOOL_PARAM_TARGET_PID: usize = 10;
 pub const TOOL_VALUE_U64: usize = 1;
+pub const CONTEXT_QUERY_MAX_NODES: usize = 8;
 
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
@@ -106,6 +111,49 @@ pub struct ToolMessageResult {
     pub target_pid: usize,
     pub target_agent_type: usize,
     pub accepted: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ContextNode {
+    pub node_id: usize,
+    pub prev_id: usize,
+    pub timestamp: usize,
+    pub tool_id: usize,
+    pub request_offset: usize,
+    pub request_len: usize,
+    pub result_offset: usize,
+    pub result_len: usize,
+    pub node_offset: usize,
+    pub flags: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ContextPushRequest {
+    pub tool_id: usize,
+    pub flags: usize,
+    pub request_ptr: usize,
+    pub request_len: usize,
+    pub result_ptr: usize,
+    pub result_len: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ContextQueryRequest {
+    pub start_index: usize,
+    pub max_nodes: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ContextQueryResult {
+    pub total_nodes: usize,
+    pub returned: usize,
+    pub active_node_id: usize,
+    pub write_offset: usize,
+    pub nodes: [ContextNode; CONTEXT_QUERY_MAX_NODES],
 }
 
 fn syscall(id: usize, args: [usize; 3]) -> isize {
@@ -200,4 +248,26 @@ pub fn sys_tool_list(info: &mut [ToolInfo]) -> isize {
         SYSCALL_TOOL_LIST,
         [info.as_mut_ptr() as usize, info.len(), 0],
     )
+}
+
+pub fn sys_context_push(request: &ContextPushRequest, node: &mut ContextNode) -> isize {
+    syscall(
+        SYSCALL_CONTEXT_PUSH,
+        [request as *const _ as usize, node as *mut _ as usize, 0],
+    )
+}
+
+pub fn sys_context_query(request: &ContextQueryRequest, result: &mut ContextQueryResult) -> isize {
+    syscall(
+        SYSCALL_CONTEXT_QUERY,
+        [request as *const _ as usize, result as *mut _ as usize, 0],
+    )
+}
+
+pub fn sys_context_rollback(node_id: usize) -> isize {
+    syscall(SYSCALL_CONTEXT_ROLLBACK, [node_id, 0, 0])
+}
+
+pub fn sys_context_clear() -> isize {
+    syscall(SYSCALL_CONTEXT_CLEAR, [0, 0, 0])
 }

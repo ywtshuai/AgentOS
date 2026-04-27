@@ -4,11 +4,13 @@ use crate::mm::{
     MapPermission, translated_byte_buffer, translated_ref, translated_refmut, translated_str,
 };
 use crate::task::{
-    AgentLoopState, AgentMeta, INITPROC, TaskControlBlock, TaskStatus, add_task, current_task,
-    current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
+    AgentLoopState, AgentMeta, CONTEXT_MAX_NODES, ContextNode, INITPROC, TaskControlBlock,
+    TaskStatus, add_task, current_task, current_user_token, exit_current_and_run_next,
+    suspend_current_and_run_next,
 };
 use crate::timer::get_time_ms;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::cmp::min;
 use core::mem::size_of;
 
@@ -24,6 +26,7 @@ const TOOL_ERR_UNKNOWN_TOOL: isize = -4;
 const TOOL_ERR_BAD_PARAM: isize = -5;
 const TOOL_ERR_CONTEXT_FULL: isize = -6;
 const TOOL_ERR_NOT_FOUND: isize = -7;
+const CONTEXT_QUERY_MAX_NODES: usize = 8;
 
 const TOOL_PARAM_STATUS: usize = 1;
 const TOOL_PARAM_AGENT_TYPE: usize = 2;
@@ -117,6 +120,33 @@ pub struct ToolMessageResult {
     pub target_pid: usize,
     pub target_agent_type: usize,
     pub accepted: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ContextPushRequest {
+    pub tool_id: usize,
+    pub flags: usize,
+    pub request_ptr: usize,
+    pub request_len: usize,
+    pub result_ptr: usize,
+    pub result_len: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ContextQueryRequest {
+    pub start_index: usize,
+    pub max_nodes: usize,
+}
+
+#[repr(C)]
+pub struct ContextQueryResult {
+    pub total_nodes: usize,
+    pub returned: usize,
+    pub active_node_id: usize,
+    pub write_offset: usize,
+    pub nodes: [ContextNode; CONTEXT_QUERY_MAX_NODES],
 }
 
 pub fn sys_exit(exit_code: i32) -> ! {
@@ -284,22 +314,30 @@ fn result_bytes<T>(result: &T) -> &[u8] {
     unsafe { core::slice::from_raw_parts(result as *const T as *const u8, size_of::<T>()) }
 }
 
-fn write_agent_context_result(
-    meta: &mut AgentMeta,
-    token: usize,
-    bytes: &[u8],
-) -> Result<usize, isize> {
+fn context_quota(meta: &AgentMeta) -> usize {
     let mut quota = meta.resource_quota;
     if quota == 0 || quota > meta.agent_context_size {
         quota = meta.agent_context_size;
     }
-    if bytes.len() > quota {
-        return Err(TOOL_ERR_CONTEXT_FULL);
+    quota
+}
+
+fn read_user_bytes(token: usize, ptr: usize, len: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    if len == 0 {
+        return bytes;
     }
-    if meta.context_path_meta + bytes.len() > quota {
-        meta.context_path_meta = 0;
+    let buffers = translated_byte_buffer(token, ptr as *const u8, len);
+    for buffer in buffers {
+        bytes.extend_from_slice(buffer);
     }
-    let offset = meta.context_path_meta;
+    bytes
+}
+
+fn write_agent_context_bytes(token: usize, meta: &AgentMeta, offset: usize, bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
     let dst = (meta.agent_context_base + offset) as *const u8;
     let buffers = translated_byte_buffer(token, dst, bytes.len());
     let mut copied = 0;
@@ -308,8 +346,31 @@ fn write_agent_context_result(
         buffer.copy_from_slice(&bytes[copied..copied + len]);
         copied += len;
     }
-    meta.context_path_meta = offset + bytes.len();
+}
+
+fn reserve_agent_context(meta: &mut AgentMeta, token: usize, bytes: &[u8]) -> Result<usize, isize> {
+    let quota = context_quota(meta);
+    if bytes.len() > quota {
+        return Err(TOOL_ERR_CONTEXT_FULL);
+    }
+    if meta.context_write_offset + bytes.len() > quota {
+        meta.context_write_offset = 0;
+        meta.context_node_count = 0;
+        meta.context_active_node = 0;
+        meta.context_path_meta = 0;
+    }
+    let offset = meta.context_write_offset;
+    write_agent_context_bytes(token, meta, offset, bytes);
+    meta.context_write_offset = offset + bytes.len();
     Ok(offset)
+}
+
+fn write_agent_context_result(
+    meta: &mut AgentMeta,
+    token: usize,
+    bytes: &[u8],
+) -> Result<usize, isize> {
+    reserve_agent_context(meta, token, bytes)
 }
 
 fn write_tool_response(
@@ -536,4 +597,145 @@ pub fn sys_tool_list(info_ptr: *mut ToolInfo, capacity: usize) -> isize {
         *translated_refmut(token, unsafe { info_ptr.add(i) }) = tools[i];
     }
     tools.len() as isize
+}
+
+fn push_context_node(meta: &mut AgentMeta, node: ContextNode) {
+    if meta.context_node_count < CONTEXT_MAX_NODES {
+        meta.context_nodes[meta.context_node_count] = node;
+        meta.context_node_count += 1;
+    } else {
+        let mut i = 1;
+        while i < CONTEXT_MAX_NODES {
+            meta.context_nodes[i - 1] = meta.context_nodes[i];
+            i += 1;
+        }
+        meta.context_nodes[CONTEXT_MAX_NODES - 1] = node;
+    }
+    meta.context_active_node = node.node_id;
+    meta.context_path_meta = meta.context_node_count;
+}
+
+pub fn sys_context_push(
+    request_ptr: *const ContextPushRequest,
+    node_ptr: *mut ContextNode,
+) -> isize {
+    let token = current_user_token();
+    let request = *translated_ref(token, request_ptr);
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    let Some(meta) = inner.agent.as_mut() else {
+        return TOOL_ERR_NOT_AGENT;
+    };
+    let required = request.request_len + request.result_len + size_of::<ContextNode>();
+    let quota = context_quota(meta);
+    if required > quota {
+        return TOOL_ERR_CONTEXT_FULL;
+    }
+    if meta.context_write_offset + required > quota {
+        meta.context_write_offset = 0;
+        meta.context_node_count = 0;
+        meta.context_active_node = 0;
+        meta.context_path_meta = 0;
+    }
+
+    let request_bytes = read_user_bytes(token, request.request_ptr, request.request_len);
+    let result_summary = read_user_bytes(token, request.result_ptr, request.result_len);
+    let request_offset = meta.context_write_offset;
+    write_agent_context_bytes(token, meta, request_offset, &request_bytes);
+    meta.context_write_offset += request_bytes.len();
+    let result_offset = meta.context_write_offset;
+    write_agent_context_bytes(token, meta, result_offset, &result_summary);
+    meta.context_write_offset += result_summary.len();
+
+    let node_offset = meta.context_write_offset;
+    let node = ContextNode {
+        node_id: meta.context_next_node,
+        prev_id: meta.context_active_node,
+        timestamp: get_time_ms(),
+        tool_id: request.tool_id,
+        request_offset,
+        request_len: request_bytes.len(),
+        result_offset,
+        result_len: result_summary.len(),
+        node_offset,
+        flags: request.flags,
+    };
+    meta.context_next_node += 1;
+    write_agent_context_bytes(token, meta, node_offset, result_bytes(&node));
+    meta.context_write_offset += size_of::<ContextNode>();
+    push_context_node(meta, node);
+    *translated_refmut(token, node_ptr) = node;
+    TOOL_STATUS_OK
+}
+
+pub fn sys_context_query(
+    request_ptr: *const ContextQueryRequest,
+    result_ptr: *mut ContextQueryResult,
+) -> isize {
+    let token = current_user_token();
+    let request = *translated_ref(token, request_ptr);
+    let task = current_task().unwrap();
+    let inner = task.inner_exclusive_access();
+    let Some(meta) = inner.agent else {
+        return TOOL_ERR_NOT_AGENT;
+    };
+    let mut result = ContextQueryResult {
+        total_nodes: meta.context_node_count,
+        returned: 0,
+        active_node_id: meta.context_active_node,
+        write_offset: meta.context_write_offset,
+        nodes: [ContextNode::empty(); CONTEXT_QUERY_MAX_NODES],
+    };
+    if request.start_index < meta.context_node_count {
+        let capacity = min(request.max_nodes, CONTEXT_QUERY_MAX_NODES);
+        let available = meta.context_node_count - request.start_index;
+        result.returned = min(capacity, available);
+        let mut i = 0;
+        while i < result.returned {
+            result.nodes[i] = meta.context_nodes[request.start_index + i];
+            i += 1;
+        }
+    }
+    *translated_refmut(token, result_ptr) = result;
+    TOOL_STATUS_OK
+}
+
+pub fn sys_context_rollback(node_id: usize) -> isize {
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    let Some(meta) = inner.agent.as_mut() else {
+        return TOOL_ERR_NOT_AGENT;
+    };
+    let mut found = None;
+    let mut i = 0;
+    while i < meta.context_node_count {
+        if meta.context_nodes[i].node_id == node_id {
+            found = Some(i);
+            break;
+        }
+        i += 1;
+    }
+    if let Some(index) = found {
+        let node = meta.context_nodes[index];
+        meta.context_active_node = node.node_id;
+        meta.context_node_count = index + 1;
+        meta.context_write_offset = node.node_offset + size_of::<ContextNode>();
+        meta.context_path_meta = meta.context_node_count;
+        TOOL_STATUS_OK
+    } else {
+        TOOL_ERR_NOT_FOUND
+    }
+}
+
+pub fn sys_context_clear() -> isize {
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    let Some(meta) = inner.agent.as_mut() else {
+        return TOOL_ERR_NOT_AGENT;
+    };
+    meta.context_node_count = 0;
+    meta.context_write_offset = 0;
+    meta.context_active_node = 0;
+    meta.context_path_meta = 0;
+    TOOL_STATUS_OK
 }

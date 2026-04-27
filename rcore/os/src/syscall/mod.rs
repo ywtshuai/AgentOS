@@ -24,10 +24,15 @@ const SYSCALL_AGENT_CREATE: usize = 500;
 const SYSCALL_AGENT_INFO: usize = 501;
 const SYSCALL_TOOL_CALL: usize = 502;
 const SYSCALL_TOOL_LIST: usize = 503;
+const SYSCALL_CONTEXT_PUSH: usize = 504;
+const SYSCALL_CONTEXT_QUERY: usize = 505;
+const SYSCALL_CONTEXT_ROLLBACK: usize = 506;
+const SYSCALL_CONTEXT_CLEAR: usize = 507;
 
 mod fs;
 mod process;
 
+use crate::task::ContextNode;
 use fs::*;
 use process::*;
 /// handle syscall exception with `syscall_id` and other arguments
@@ -50,6 +55,16 @@ pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
             sys_tool_call(args[0] as *const ToolRequest, args[1] as *mut ToolResponse)
         }
         SYSCALL_TOOL_LIST => sys_tool_list(args[0] as *mut ToolInfo, args[1]),
+        SYSCALL_CONTEXT_PUSH => sys_context_push(
+            args[0] as *const ContextPushRequest,
+            args[1] as *mut ContextNode,
+        ),
+        SYSCALL_CONTEXT_QUERY => sys_context_query(
+            args[0] as *const ContextQueryRequest,
+            args[1] as *mut ContextQueryResult,
+        ),
+        SYSCALL_CONTEXT_ROLLBACK => sys_context_rollback(args[0]),
+        SYSCALL_CONTEXT_CLEAR => sys_context_clear(),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
     }
 }

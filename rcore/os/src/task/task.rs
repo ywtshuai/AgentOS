@@ -47,10 +47,54 @@ pub struct AgentMeta {
     pub loop_state: AgentLoopState,
     /// Reserved context-path metadata slot.
     pub context_path_meta: usize,
+    /// Number of live context nodes tracked by the kernel.
+    pub context_node_count: usize,
+    /// Next Agent Context byte offset used by tool results and context nodes.
+    pub context_write_offset: usize,
+    /// Current active context node id. Zero means there is no active node.
+    pub context_active_node: usize,
+    /// Next context node id to allocate.
+    pub context_next_node: usize,
+    /// FIFO metadata ring for recent Context Path nodes.
+    pub context_nodes: [ContextNode; CONTEXT_MAX_NODES],
     /// Base virtual address of the mapped Agent Context area, initialized in M2.
     pub agent_context_base: usize,
     /// Size of the mapped Agent Context area, initialized in M2.
     pub agent_context_size: usize,
+}
+
+pub const CONTEXT_MAX_NODES: usize = 16;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ContextNode {
+    pub node_id: usize,
+    pub prev_id: usize,
+    pub timestamp: usize,
+    pub tool_id: usize,
+    pub request_offset: usize,
+    pub request_len: usize,
+    pub result_offset: usize,
+    pub result_len: usize,
+    pub node_offset: usize,
+    pub flags: usize,
+}
+
+impl ContextNode {
+    pub const fn empty() -> Self {
+        Self {
+            node_id: 0,
+            prev_id: 0,
+            timestamp: 0,
+            tool_id: 0,
+            request_offset: 0,
+            request_len: 0,
+            result_offset: 0,
+            result_len: 0,
+            node_offset: 0,
+            flags: 0,
+        }
+    }
 }
 
 /// Minimal Agent loop state for M1 metadata.
@@ -78,6 +122,11 @@ impl AgentMeta {
             resource_quota,
             loop_state: AgentLoopState::Ready,
             context_path_meta: 0,
+            context_node_count: 0,
+            context_write_offset: 0,
+            context_active_node: 0,
+            context_next_node: 1,
+            context_nodes: [ContextNode::empty(); CONTEXT_MAX_NODES],
             agent_context_base: AGENT_CONTEXT_BASE,
             agent_context_size: AGENT_CONTEXT_SIZE,
         }

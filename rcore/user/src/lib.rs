@@ -15,10 +15,11 @@ use buddy_system_allocator::LockedHeap;
 use core::ptr::addr_of_mut;
 use syscall::*;
 pub use syscall::{
-    AgentInfo, TOOL_GET_SYSTEM_STATUS, TOOL_MAX_PARAMS, TOOL_PARAM_AGENT_TYPE, TOOL_PARAM_STATUS,
-    TOOL_PARAM_TARGET_PID, TOOL_QUERY_MAX_ITEMS, TOOL_QUERY_PROCESS, TOOL_SEND_MESSAGE,
-    TOOL_VALUE_U64, ToolInfo, ToolMessageResult, ToolParam, ToolProcessQueryResult,
-    ToolProcessSummary, ToolRequest, ToolResponse, ToolSystemStatus,
+    AgentInfo, CONTEXT_QUERY_MAX_NODES, ContextNode, ContextPushRequest, ContextQueryRequest,
+    ContextQueryResult, TOOL_GET_SYSTEM_STATUS, TOOL_MAX_PARAMS, TOOL_PARAM_AGENT_TYPE,
+    TOOL_PARAM_STATUS, TOOL_PARAM_TARGET_PID, TOOL_QUERY_MAX_ITEMS, TOOL_QUERY_PROCESS,
+    TOOL_SEND_MESSAGE, TOOL_VALUE_U64, ToolInfo, ToolMessageResult, ToolParam,
+    ToolProcessQueryResult, ToolProcessSummary, ToolRequest, ToolResponse, ToolSystemStatus,
 };
 
 const USER_HEAP_SIZE: usize = 32768;
@@ -130,4 +131,16 @@ pub fn tool_call(request: &ToolRequest, response: &mut ToolResponse) -> isize {
 }
 pub fn tool_list(info: &mut [ToolInfo]) -> isize {
     sys_tool_list(info)
+}
+pub fn context_push(request: &ContextPushRequest, node: &mut ContextNode) -> isize {
+    sys_context_push(request, node)
+}
+pub fn context_query(request: &ContextQueryRequest, result: &mut ContextQueryResult) -> isize {
+    sys_context_query(request, result)
+}
+pub fn context_rollback(node_id: usize) -> isize {
+    sys_context_rollback(node_id)
+}
+pub fn context_clear() -> isize {
+    sys_context_clear()
 }
