@@ -196,7 +196,10 @@ impl TaskControlBlock {
         // ---- hold parent PCB lock
         let mut parent_inner = self.inner_exclusive_access();
         // copy user space(include trap context)
-        let memory_set = MemorySet::from_existed_user(&parent_inner.memory_set);
+        let mut memory_set = MemorySet::from_existed_user(&parent_inner.memory_set);
+        if parent_inner.agent.is_some() {
+            memory_set.remove_area_with_start_vpn(VirtAddr::from(AGENT_CONTEXT_BASE).floor());
+        }
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT).into())
             .unwrap()

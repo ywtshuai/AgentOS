@@ -22,6 +22,8 @@ const SYSCALL_EXEC: usize = 221;
 const SYSCALL_WAITPID: usize = 260;
 const SYSCALL_AGENT_CREATE: usize = 500;
 const SYSCALL_AGENT_INFO: usize = 501;
+const SYSCALL_TOOL_CALL: usize = 502;
+const SYSCALL_TOOL_LIST: usize = 503;
 
 mod fs;
 mod process;
@@ -44,6 +46,10 @@ pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
         SYSCALL_WAITPID => sys_waitpid(args[0] as isize, args[1] as *mut i32),
         SYSCALL_AGENT_CREATE => sys_agent_create(args[0], args[1], args[2]),
         SYSCALL_AGENT_INFO => sys_agent_info(args[0] as isize, args[1] as *mut AgentInfo),
+        SYSCALL_TOOL_CALL => {
+            sys_tool_call(args[0] as *const ToolRequest, args[1] as *mut ToolResponse)
+        }
+        SYSCALL_TOOL_LIST => sys_tool_list(args[0] as *mut ToolInfo, args[1]),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
     }
 }

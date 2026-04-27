@@ -13,6 +13,18 @@ const SYSCALL_EXEC: usize = 221;
 const SYSCALL_WAITPID: usize = 260;
 const SYSCALL_AGENT_CREATE: usize = 500;
 const SYSCALL_AGENT_INFO: usize = 501;
+const SYSCALL_TOOL_CALL: usize = 502;
+const SYSCALL_TOOL_LIST: usize = 503;
+
+pub const TOOL_GET_SYSTEM_STATUS: usize = 1;
+pub const TOOL_QUERY_PROCESS: usize = 2;
+pub const TOOL_SEND_MESSAGE: usize = 3;
+pub const TOOL_MAX_PARAMS: usize = 4;
+pub const TOOL_QUERY_MAX_ITEMS: usize = 8;
+pub const TOOL_PARAM_STATUS: usize = 1;
+pub const TOOL_PARAM_AGENT_TYPE: usize = 2;
+pub const TOOL_PARAM_TARGET_PID: usize = 10;
+pub const TOOL_VALUE_U64: usize = 1;
 
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
@@ -25,6 +37,75 @@ pub struct AgentInfo {
     pub context_path_meta: usize,
     pub agent_context_base: usize,
     pub agent_context_size: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolParam {
+    pub key_id: usize,
+    pub value_type: usize,
+    pub value: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolRequest {
+    pub tool_id: usize,
+    pub param_count: usize,
+    pub params: [ToolParam; TOOL_MAX_PARAMS],
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolResponse {
+    pub status: isize,
+    pub result_len: usize,
+    pub result_offset: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolInfo {
+    pub tool_id: usize,
+    pub max_params: usize,
+    pub flags: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolSystemStatus {
+    pub process_count: usize,
+    pub agent_count: usize,
+    pub ready_count: usize,
+    pub running_count: usize,
+    pub zombie_count: usize,
+    pub current_pid: usize,
+    pub time_ms: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolProcessSummary {
+    pub pid: usize,
+    pub status: usize,
+    pub agent_type: usize,
+    pub loop_state: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolProcessQueryResult {
+    pub total_matches: usize,
+    pub returned: usize,
+    pub items: [ToolProcessSummary; TOOL_QUERY_MAX_ITEMS],
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ToolMessageResult {
+    pub target_pid: usize,
+    pub target_agent_type: usize,
+    pub accepted: usize,
 }
 
 fn syscall(id: usize, args: [usize; 3]) -> isize {
@@ -104,5 +185,19 @@ pub fn sys_agent_info(pid: isize, info: &mut AgentInfo) -> isize {
     syscall(
         SYSCALL_AGENT_INFO,
         [pid as usize, info as *mut _ as usize, 0],
+    )
+}
+
+pub fn sys_tool_call(request: &ToolRequest, response: &mut ToolResponse) -> isize {
+    syscall(
+        SYSCALL_TOOL_CALL,
+        [request as *const _ as usize, response as *mut _ as usize, 0],
+    )
+}
+
+pub fn sys_tool_list(info: &mut [ToolInfo]) -> isize {
+    syscall(
+        SYSCALL_TOOL_LIST,
+        [info.as_mut_ptr() as usize, info.len(), 0],
     )
 }

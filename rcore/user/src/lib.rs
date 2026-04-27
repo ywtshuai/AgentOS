@@ -13,8 +13,13 @@ extern crate bitflags;
 
 use buddy_system_allocator::LockedHeap;
 use core::ptr::addr_of_mut;
-pub use syscall::AgentInfo;
 use syscall::*;
+pub use syscall::{
+    AgentInfo, TOOL_GET_SYSTEM_STATUS, TOOL_MAX_PARAMS, TOOL_PARAM_AGENT_TYPE, TOOL_PARAM_STATUS,
+    TOOL_PARAM_TARGET_PID, TOOL_QUERY_MAX_ITEMS, TOOL_QUERY_PROCESS, TOOL_SEND_MESSAGE,
+    TOOL_VALUE_U64, ToolInfo, ToolMessageResult, ToolParam, ToolProcessQueryResult,
+    ToolProcessSummary, ToolRequest, ToolResponse, ToolSystemStatus,
+};
 
 const USER_HEAP_SIZE: usize = 32768;
 pub const AGENT_CONTEXT_SIZE: usize = 64 * 1024;
@@ -119,4 +124,10 @@ pub fn agent_create(agent_type: usize, heartbeat_interval: usize, resource_quota
 }
 pub fn agent_info(pid: isize, info: &mut AgentInfo) -> isize {
     sys_agent_info(pid, info)
+}
+pub fn tool_call(request: &ToolRequest, response: &mut ToolResponse) -> isize {
+    sys_tool_call(request, response)
+}
+pub fn tool_list(info: &mut [ToolInfo]) -> isize {
+    sys_tool_list(info)
 }
