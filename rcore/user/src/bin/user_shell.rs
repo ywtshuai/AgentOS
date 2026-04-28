@@ -16,6 +16,16 @@ use alloc::string::String;
 use user_lib::console::getchar;
 use user_lib::{exec, fork, waitpid};
 
+fn resolve_command(line: &str) -> &str {
+    match line {
+        "agent_demo basic\0" => "agent_demo_basic\0",
+        "agent_demo loop\0" => "agent_demo_loop\0",
+        "agent_demo fs_query_bench\0" => "agent_demo_fs_query_bench\0",
+        "agent_demo full\0" => "agent_demo_full\0",
+        _ => line,
+    }
+}
+
 #[unsafe(no_mangle)]
 pub fn main() -> i32 {
     println!("Rust user shell");
@@ -31,7 +41,7 @@ pub fn main() -> i32 {
                     let pid = fork();
                     if pid == 0 {
                         // child process
-                        if exec(line.as_str()) == -1 {
+                        if exec(resolve_command(line.as_str())) == -1 {
                             println!("Error when executing!");
                             return -4;
                         }
