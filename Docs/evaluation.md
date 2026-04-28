@@ -1,12 +1,12 @@
-# Agent-OS Evaluation
+# Agent-OS 评估报告
 
-## Environment
+## 环境
 
-The implementation is evaluated on RISC-V 64 QEMU under the rCore-Tutorial v3 build flow. The verified commands use stable Rust with `RUSTC_BOOTSTRAP=1`.
+本项目在 rCore-Tutorial v3 构建流程下，通过 RISC-V 64 QEMU 进行评估。已验证命令使用 stable Rust，并配合 `RUSTC_BOOTSTRAP=1`。
 
-## Build Checks
+## 构建检查
 
-Executed checks:
+已执行检查：
 
 ```bash
 cargo +stable fmt
@@ -18,31 +18,31 @@ rustup run stable rust-objcopy target/riscv64gc-unknown-none-elf/release/os --st
 RUSTUP_TOOLCHAIN=stable RUSTC_BOOTSTRAP=1 make fs-img
 ```
 
-Result: all build checks passed in the M7 verification run.
+结果：M7 验证记录中，上述构建检查全部通过。
 
-## Functional Tests
+## 功能测试
 
-Regression programs:
+回归程序：
 
-| Program | Coverage | Result |
+| 程序 | 覆盖内容 | 结果 |
 | --- | --- | --- |
-| `agent_m1` | ordinary processes are not Agents; `agent_info` error paths | Passed |
-| `agent_m2` | Agent creation, Agent Context mapping, direct Context read/write | Passed |
-| `agent_m3` | tool list, system status, process query, message tool, tool errors | Passed |
-| `agent_m4` | Context Path push, query, rollback, clear, FIFO quota behavior | Passed |
-| `agent_m5` | heartbeat wait, message wakeup, blocked Agent scheduling | Passed |
-| `agent_m6` | file attributes, multi-condition file query, delete behavior | Passed |
+| `agent_m1` | 普通进程默认不是 Agent；`agent_info` 错误路径 | 通过 |
+| `agent_m2` | Agent 创建、Agent Context 映射、Context 直接读写 | 通过 |
+| `agent_m3` | 工具列表、系统状态、进程查询、消息工具、工具错误处理 | 通过 |
+| `agent_m4` | Context Path push、query、rollback、clear、FIFO 配额行为 | 通过 |
+| `agent_m5` | 心跳等待、消息唤醒、Blocked Agent 调度 | 通过 |
+| `agent_m6` | 文件属性、多条件文件查询、属性删除行为 | 通过 |
 
-Integrated demo programs:
+综合 demo 程序：
 
-| Program | Coverage | Result |
+| 程序 | 覆盖内容 | 结果 |
 | --- | --- | --- |
-| `agent_demo basic` | Agent creation, tool calls, result reads, Context Path writes | Passed |
-| `agent_demo loop` | heartbeat wakeup, Worker-Agent message wakeup, Context Path | Passed |
-| `agent_demo fs_query_bench` | file attributes and query access-count comparison | Passed |
-| `agent_demo full` | end-to-end Admin-Agent scenario across M1-M6 mechanisms | Passed |
+| `agent_demo basic` | Agent 创建、工具调用、结果读取、Context Path 写入 | 通过 |
+| `agent_demo loop` | 心跳唤醒、Worker-Agent 消息唤醒、Context Path | 通过 |
+| `agent_demo fs_query_bench` | 文件属性和查询访问次数对比 | 通过 |
+| `agent_demo full` | 串联 M1-M6 机制的 Admin-Agent 端到端场景 | 通过 |
 
-Key M7 QEMU output:
+M7 QEMU 关键输出：
 
 ```text
 agent_demo basic: passed
@@ -57,40 +57,40 @@ agent_m2 passed
 agent_m1 passed
 ```
 
-The automated QEMU command is terminated by `timeout` after usershell returns to waiting for input. Exit code `124` is expected in that harness once all pass lines have been printed.
+自动化 QEMU 命令在 usershell 回到等待输入状态后由 `timeout` 结束。因此，当所有 passed 输出已经打印后，外层命令退出码为 `124` 是该测试脚本下的预期现象。
 
-## File Query Performance
+## 文件查询性能
 
-The M6/M7 benchmark creates four files and attaches attributes. The query:
+M6/M7 benchmark 创建 4 个文件并绑定属性。查询条件为：
 
 ```text
 type=memory AND owner=worker AND tag=social
 ```
 
-returns one matching file:
+返回 1 个匹配文件：
 
 ```text
 query_file matches=1 traversal=4 indexed=2 first=m7_b
 full file_query matches=1 traversal=4 indexed=2
 ```
 
-Interpretation:
+解释：
 
-- Full traversal checks 4 attribute entries.
-- The simplified index model checks 2 candidate entries selected by the first query condition.
-- Candidate query visits are reduced by 50 percent in the demo dataset.
+- 全量遍历需要检查 4 个属性项。
+- 简化索引模型根据第一个查询条件选出候选项，只需检查 2 个条目。
+- 在 demo 数据集上，候选查询访问次数减少 50%。
 
-## Agent Context Access
+## Agent Context 访问
 
-Agent Context is mapped into user space, so the Agent can directly read tool results and Context Path summaries after the syscall has written them. This avoids a second syscall for every result read and demonstrates the mechanism/policy split required by the competition statement:
+Agent Context 映射在用户态地址空间中。系统调用把工具结果和 Context Path 摘要写入该区域后，Agent 可以直接读取，不需要为每次结果读取再发起一次系统调用。这体现了赛题要求的机制与策略分离：
 
-- Kernel enforces identity, quota, and metadata updates.
-- User-space policy reads and interprets cached context bytes directly.
+- 内核负责 Agent 身份、配额和元数据更新。
+- 用户态策略直接读取并解释 Context 缓存字节。
 
-## Stability Notes
+## 稳定性说明
 
-The integrated scenario repeatedly exercises Agent creation, wakeup, file query, Context Path, and shell command mapping without kernel panic in the recorded M7 QEMU run. Known implementation limits are documented in the milestone reports:
+M7 记录的综合场景反复覆盖 Agent 创建、唤醒、文件查询、Context Path 和 shell 命令映射，没有出现 kernel panic。当前已知限制记录在各里程碑报告中，主要包括：
 
-- File attributes are memory-only and reset after reboot.
-- Context Path FIFO is coarse-grained when the write cursor wraps.
-- Heartbeat scanning is linear over the process tree, suitable for the teaching demo scale.
+- 文件属性是内存态，重启后不保留。
+- Context Path FIFO 在写入游标换轮时粒度较粗。
+- 心跳扫描按进程树线性遍历，适合当前教学 demo 规模。
